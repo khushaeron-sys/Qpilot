@@ -25,7 +25,7 @@ st.set_page_config(page_title="AutoQML", page_icon="⚛️", layout="wide")
 # --- Simple password gate ---
 def check_password():
     def password_entered():
-        if st.session_state["password"] == "qhack2026":  # change this to your own password
+        if st.session_state["password"] == "qhack2026":
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:

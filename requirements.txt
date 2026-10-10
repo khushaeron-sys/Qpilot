@@ -11,3 +11,5 @@ streamlit>=1.35
 matplotlib
 pylatexenc                             # needed for circuit.draw("mpl")
 # qiskit-ibm-runtime>=0.30,<0.40       # only for the optional real-hardware demo
+
+pylatexenc>=2.10

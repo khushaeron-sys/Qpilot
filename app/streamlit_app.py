@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 warnings.filterwarnings("ignore")
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -22,8 +23,27 @@ DEMOS = {"Breast cancer (30 features, binary)": str(_ROOT / "data/breast_cancer.
 
 st.set_page_config(page_title="AutoQML", page_icon="⚛️", layout="wide")
 st.title("⚛️ AutoQML — natural language → quantum ML pipeline")
-st.caption("Claude plans the circuit from a fixed Qiskit catalog · Qiskit trains a real parameterized quantum circuit · "
-           "a classical model keeps it honest.")
+
+# 1. Styled info banner
+st.markdown(
+    """
+    <div style="
+        background:#171B26;
+        border-left:4px solid #A855F7;
+        padding:16px 20px;
+        border-radius:6px;
+        margin-bottom:20px;
+        color:#E2E8F0;
+        font-size:0.95rem;
+        line-height:1.6;
+    ">
+        You describe your ML task in plain English &rarr; an agent selects a NISQ-feasible quantum
+        architecture from a fixed Qiskit catalog &rarr; a real parameterized quantum circuit trains
+        on a simulator &rarr; we benchmark it against a classical baseline on identical data.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ───────────── sidebar: inputs ─────────────
 with st.sidebar:
@@ -40,6 +60,7 @@ with st.sidebar:
             st.warning(f"Demo file not found: `{DEMOS[demo]}`")
 
     target = prompt = None
+    iters = 2
     if df is not None:
         st.header("2 · Task")
         guess = guess_target(df)
@@ -80,12 +101,16 @@ if run and df is not None:
             else:
                 msg = f"🔎 **Critic**: {p}"
             trace.append(msg); st.write(msg)
+        # 3. Broader exception handler
         try:
             report = run_autoqml(df, RunRequest(user_prompt=prompt, target_column=target),
                                  max_iterations=iters, on_event=on_event,
                                  use_fallback=use_fallback)
-        except ValueError as e:
-            status.update(label="Cannot run", state="error"); st.error(str(e)); st.stop()
+        except Exception as e:
+            status.update(label="Pipeline failed", state="error")
+            st.error(f"Pipeline failed: {e}")
+            st.info("Try enabling the fallback planner if this is an LLM API issue.")
+            st.stop()
         status.update(label="Done", state="complete", expanded=False)
     CACHE.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
     CACHE.write_text(report.model_dump_json())
@@ -100,15 +125,104 @@ if report is None:
 final = report.attempts[-1]
 q, b, ev, plan = final.qnn, final.baseline, final.evaluation, final.plan
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("⚛️ Quantum VQC (test acc)", f"{q.test_accuracy:.1%}")
-c2.metric(f"Classical · same {b.matched_n_features} features", f"{b.matched_accuracy:.1%}",
-          delta=f"{ev.delta_vs_matched*100:+.1f} pts (QNN − classical)", delta_color="off")
-c3.metric(f"Classical · all {b.full_n_features} features", f"{b.full_accuracy:.1%}")
-c4.metric("Circuit", f"{q.n_qubits} qubits · {q.n_params} params", f"depth {q.circuit_depth} · {q.cx_count} CX", delta_color="off")
-st.info(f"**Verdict:** {ev.verdict}  \n**Agent rationale:** {plan.rationale}")
+# 2a: completion banner
+st.success(
+    f"Pipeline completed in {q.train_seconds:.1f}s — "
+    f"real {plan.n_qubits}-qubit quantum circuit trained on simulator"
+)
 
-t_res, t_circ, t_trace, t_plan = st.tabs(["📈 Results", "🧬 Circuit", "🤖 Agent trace", "🧾 Plan (JSON)"])
+# 2b
+st.divider()
+
+# 2c: 3-column metrics
+m1, m2, m3 = st.columns(3)
+m1.metric("Quantum Accuracy", f"{q.test_accuracy:.1%}")
+m2.metric("Classical (matched features)", f"{b.matched_accuracy:.1%}")
+m3.metric("Classical (all features)", f"{b.full_accuracy:.1%}")
+
+# 2d
+st.divider()
+
+# 2e: circuit + architecture side-by-side
+col_circ, col_arch = st.columns(2)
+
+with col_circ:
+    st.subheader("Quantum Circuit")
+    try:
+        qc = build_circuit(plan)
+        fig_circ = qc.draw(output="mpl", style="iqp")
+        st.pyplot(fig_circ)
+        plt.close(fig_circ)
+    except Exception:
+        try:
+            qc = build_circuit(plan)
+            st.code(str(qc))
+        except Exception as circ_err:
+            st.warning(f"Could not render circuit: {circ_err}")
+
+with col_arch:
+    st.subheader("Chosen Architecture")
+    st.markdown(
+        f"""
+- **Qubits:** {plan.n_qubits}
+- **Feature Map:** {plan.feature_map.name} (reps={plan.feature_map.reps})
+- **Ansatz:** {plan.ansatz.name} (reps={plan.ansatz.reps})
+- **Optimizer:** {plan.optimizer.name} (maxiter={plan.optimizer.maxiter})
+- **Reasoning:** {plan.rationale}
+        """
+    )
+
+# 2f
+st.divider()
+
+# 2g: dark matplotlib charts
+def _dark_fig():
+    """Return a (fig, ax) pair pre-styled with a dark background."""
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    fig.patch.set_facecolor("#0B0E14")
+    ax.set_facecolor("#0B0E14")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#2D3748")
+    ax.tick_params(colors="white")
+    ax.xaxis.label.set_color("white")
+    ax.yaxis.label.set_color("white")
+    ax.title.set_color("white")
+    return fig, ax
+
+
+chart_l, chart_r = st.columns(2)
+
+with chart_l:
+    fig_loss, ax_loss = _dark_fig()
+    ax_loss.plot(q.loss_history, color="#A855F7", linewidth=2)
+    ax_loss.set_title("Training Loss", fontsize=13, fontweight="bold")
+    ax_loss.set_xlabel("Iteration")
+    ax_loss.set_ylabel("Loss")
+    st.pyplot(fig_loss)
+    plt.close(fig_loss)
+
+with chart_r:
+    fig_acc, ax_acc = _dark_fig()
+    labels = [
+        "Quantum VQC",
+        f"Classical\n({b.matched_n_features} feat.)",
+        f"Classical\n(all {b.full_n_features} feat.)",
+    ]
+    values = [q.test_accuracy, b.matched_accuracy, b.full_accuracy]
+    bars = ax_acc.barh(labels, values, color=["#A855F7", "#6B7280", "#4B5563"], height=0.5)
+    ax_acc.set_xlim(0, 1)
+    ax_acc.set_xlabel("Accuracy")
+    ax_acc.set_title("Accuracy Comparison", fontsize=13, fontweight="bold")
+    for bar, val in zip(bars, values):
+        ax_acc.text(
+            min(val + 0.01, 0.97), bar.get_y() + bar.get_height() / 2,
+            f"{val:.1%}", va="center", color="white", fontsize=10,
+        )
+    st.pyplot(fig_acc)
+    plt.close(fig_acc)
+
+# ── detailed tabs ──
+t_res, t_circ, t_trace, t_plan = st.tabs(["📈 Detailed Results", "🧬 Circuit (decomposed)", "🤖 Agent trace", "🧾 Plan (JSON)"])
 
 with t_res:
     a, bcol = st.columns(2)
@@ -130,12 +244,16 @@ with t_res:
             use_container_width=True, hide_index=True)
 
 with t_circ:
-    qc = build_circuit(plan)
     st.caption("Feature map (data encoding, input angles x[i]) followed by the trainable ansatz θ[i].")
     try:
-        st.pyplot(qc.decompose(reps=2).draw("mpl", fold=28, scale=0.7))
+        qc2 = build_circuit(plan)
+        st.pyplot(qc2.decompose(reps=2).draw("mpl", fold=28, scale=0.7))
     except Exception:
-        st.code(str(qc.decompose(reps=2).draw("text", fold=120)))
+        try:
+            qc2 = build_circuit(plan)
+            st.code(str(qc2.decompose(reps=2).draw("text", fold=120)))
+        except Exception as e2:
+            st.warning(f"Circuit render failed: {e2}")
 
 with t_trace:
     for m in st.session_state.get("trace", ["(trace is only kept for live runs)"]):
@@ -144,3 +262,14 @@ with t_trace:
 
 with t_plan:
     st.json(plan.model_dump())
+
+# 4. Footer
+st.markdown(
+    """
+    <hr style="border:none;border-top:1px solid #2D3748;margin:40px 0 12px 0;">
+    <p style="text-align:center;color:#6B7280;font-size:12px;margin:0;">
+        Q-Hack India 2026 &middot; Built with Qiskit, Claude, and Streamlit
+    </p>
+    """,
+    unsafe_allow_html=True,
+)

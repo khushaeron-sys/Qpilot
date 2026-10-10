@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
+
 from autoqml.agent.orchestrator import run_autoqml
 from autoqml.profiler import guess_target
 from autoqml.quantum.builders import build_circuit
@@ -21,6 +22,63 @@ CACHE = _ROOT / "data/cache/last_run.json"
 DEMOS = {"Breast cancer (30 features, binary)": str(_ROOT / "data/breast_cancer.csv")}
 
 st.set_page_config(page_title="AutoQML", page_icon="⚛️", layout="wide")
+# --- Simple password gate ---
+def check_password():
+    def password_entered():
+        if st.session_state["password"] == "qhack2026":  # change this to your own password
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.markdown("""
+    <style>
+    .block-container { padding-top: 10vh; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        st.markdown("""
+        <div style="text-align:center; margin-bottom: 24px;">
+            <div style="font-size: 48px;">⚛️</div>
+            <div style="font-size: 26px; font-weight: 700; color: #F5F5F7; margin-top: 8px;">
+                AutoQML
+            </div>
+            <div style="font-size: 14px; color: #9CA3AF; margin-top: 4px;">
+                Natural Language → Quantum ML Pipeline
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div style="background:#171B26; border:1px solid #262A35; border-radius:12px;
+        padding:28px 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);">
+        """, unsafe_allow_html=True)
+
+        st.text_input("Password", type="password", on_change=password_entered, key="password",
+                       placeholder="Enter access password")
+
+        if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+            st.markdown('<p style="color:#F87171; font-size:13px; margin-top:-8px;">Incorrect password, try again.</p>',
+                        unsafe_allow_html=True)
+
+        st.markdown("""
+        <p style="color:#6B7280; font-size:12px; text-align:center; margin-top:16px;">
+            Q-Hack India 2026 · IBM Quantum Track
+        </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    return False
+
+if not check_password():
+    st.stop()
+# --- end password gate ---
+
 
 PURPLE = "#A855F7"
 BG = "#0B0E14"

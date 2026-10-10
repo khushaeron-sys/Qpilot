@@ -13,9 +13,12 @@ from autoqml.agent.orchestrator import run_autoqml
 from autoqml.profiler import guess_target
 from autoqml.quantum.builders import build_circuit
 from autoqml.schemas import RunReport, RunRequest
+import autoqml.fallback as fallback_mod
 
-CACHE = Path("data/cache/last_run.json")
-DEMOS = {"Breast cancer (30 features, binary)": "data/breast_cancer.csv"}
+# Anchor all data paths to the project root (parent of the app/ directory)
+_ROOT = Path(__file__).resolve().parents[1]
+CACHE = _ROOT / "data/cache/last_run.json"
+DEMOS = {"Breast cancer (30 features, binary)": str(_ROOT / "data/breast_cancer.csv")}
 
 st.set_page_config(page_title="AutoQML", page_icon="⚛️", layout="wide")
 st.title("⚛️ AutoQML — natural language → quantum ML pipeline")
@@ -27,7 +30,14 @@ with st.sidebar:
     st.header("1 · Data")
     up = st.file_uploader("Upload a CSV", type="csv")
     demo = st.selectbox("…or pick a demo dataset", ["(none)"] + list(DEMOS))
-    df = pd.read_csv(up) if up else (pd.read_csv(DEMOS[demo]) if demo != "(none)" else None)
+    df = None
+    if up:
+        df = pd.read_csv(up)
+    elif demo != "(none)":
+        try:
+            df = pd.read_csv(DEMOS[demo])
+        except FileNotFoundError:
+            st.warning(f"Demo file not found: `{DEMOS[demo]}`")
 
     target = prompt = None
     if df is not None:
@@ -37,6 +47,16 @@ with st.sidebar:
         prompt = st.text_area("What should the model do?", height=120,
                               value="Classify whether the tumor is malignant. Prioritize accuracy, keep it under 6 qubits.")
         iters = st.slider("Max agent iterations", 1, 3, 2, help="1 = plan once. 2+ lets the critic revise the plan.")
+
+    st.header("3 · Planner")
+    use_fallback = st.checkbox(
+        "Skip LLM planner (use deterministic fallback)",
+        value=False,
+        help="Bypass the Claude API and use a fixed, rule-based quantum plan. Useful when no API key is set or for reproducible runs.",
+    )
+    if use_fallback:
+        st.info("⚙️ Running in fallback mode.", icon="⚙️")
+
     run = st.button("🚀 Run AutoQML", type="primary", disabled=df is None, use_container_width=True)
     if CACHE.exists() and st.button("📼 Load last saved run (demo fallback)", use_container_width=True):
         st.session_state["report"] = RunReport.model_validate_json(CACHE.read_text())
@@ -62,11 +82,12 @@ if run and df is not None:
             trace.append(msg); st.write(msg)
         try:
             report = run_autoqml(df, RunRequest(user_prompt=prompt, target_column=target),
-                                 max_iterations=iters, on_event=on_event)
+                                 max_iterations=iters, on_event=on_event,
+                                 use_fallback=use_fallback)
         except ValueError as e:
             status.update(label="Cannot run", state="error"); st.error(str(e)); st.stop()
         status.update(label="Done", state="complete", expanded=False)
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    CACHE.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
     CACHE.write_text(report.model_dump_json())
     st.session_state["report"], st.session_state["trace"] = report, trace
 

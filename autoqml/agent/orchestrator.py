@@ -3,6 +3,7 @@ import pandas as pd
 from ..baseline import run_baselines
 from ..catalog import MAX_CLASSES
 from ..evaluator import evaluate
+from .. import fallback as fallback_mod
 from ..preprocess import prepare_data
 from ..profiler import profile_dataset
 from ..quantum.trainer import train_qnn
@@ -13,7 +14,8 @@ from .planner import plan_with_retries
 
 
 def run_autoqml(df: pd.DataFrame, request: RunRequest, max_iterations: int = 2,
-                sampler_kind: str = "reference", on_event=None, call=call_tool) -> RunReport:
+                sampler_kind: str = "reference", on_event=None, call=call_tool,
+                use_fallback: bool = False) -> RunReport:
     emit = on_event or (lambda kind, payload: None)
 
     profile = profile_dataset(df, request.target_column)
@@ -22,7 +24,11 @@ def run_autoqml(df: pd.DataFrame, request: RunRequest, max_iterations: int = 2,
         raise ValueError(f"Target '{request.target_column}' has {profile.n_classes} distinct values; "
                          f"AutoQML supports classification with 2-{MAX_CLASSES} classes.")
 
-    plan, meta = plan_with_retries(request.user_prompt, profile, call=call)
+    if use_fallback:
+        plan = fallback_mod.default_plan(profile, request.user_prompt)
+        meta = {"source": "fallback_forced", "reason": "User requested deterministic fallback."}
+    else:
+        plan, meta = plan_with_retries(request.user_prompt, profile, call=call)
     emit("plan", (plan, meta))
 
     attempts = []
